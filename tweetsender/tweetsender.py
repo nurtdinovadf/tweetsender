@@ -10,18 +10,19 @@ import json
 import smtplib
 import datetime
 from email.mime.text import MIMEText
+import sys
 
 class TwSender(object):
     def __init__(self):
         print('[INFO] Loading keys...')
-        keys = json.load(open('keyconf.json'))
+        keys = json.load(open(sys.path[0] + '/keyconf.json'))
         print('[INFO] Connecting to twitter api...')
         self.__api = twitter.Api(consumer_key = keys['consumer_key'],
                       consumer_secret = keys['consumer_secret'],
                       access_token_key = keys['access_token_key'],
                       access_token_secret = keys['access_token_secret'])
         print('[INFO] Loading users...')
-        self.__users = json.load(open('userconf.json'))
+        self.__users = json.load(open(sys.path[0] + '/userconf.json'))
         print('[INFO] Updating users with empty last tweets...')
         self.__update_users_ids__()
         print('[INFO] SMTP server configuration...')
@@ -41,7 +42,7 @@ class TwSender(object):
         self.__flush_users__(self.__users)
         
     def __flush_users__(self, users):
-        with open('userconf.json', 'w') as fp:
+        with open(sys.path[0] + '/userconf.json', 'w') as fp:
             json.dump(users, fp)
     
     def __update_users__(self):
@@ -52,7 +53,10 @@ class TwSender(object):
             idlist = []
             for s in t:
                 idlist.append(s.AsDict()['id'])
-            ID = max(idlist)
+            if len(idlist) > 0:
+                ID = max(idlist)
+            else:
+                ID = user['id']
             nusers.append({'id':ID, 'user': user['user']})
         self.__users = nusers
         self.__flush_users__(nusers)
@@ -66,7 +70,7 @@ class TwSender(object):
         self.tweets_to_send = ts
     
     def __smtp_login__(self):
-        creds = json.load(open('smtpconf.json'))
+        creds = json.load(open(sys.path[0] + '/smtpconf.json'))
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.connect("smtp.gmail.com", 587)
         server.ehlo()
