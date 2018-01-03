@@ -1,5 +1,6 @@
 # tweetsender
-Sending tweets of particular users to your email without following them
+Get tweets of particular users to your gmail inbox without using twitter app
+So you can follow people you admire and read inspiring ideas without being annoyed with push notifications. Using the power of email, you can read tweets whenever you want and have all the tweets history in your inbox.
 
 # Getting started
 * Create an application in twitter with the help of their guide: https://developer.twitter.com/en/docs/basics/authentication/guides/access-tokens
