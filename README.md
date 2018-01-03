@@ -6,9 +6,10 @@ So you can follow people you admire and read inspiring ideas without being annoy
 Using the power of email, you can read tweets whenever you want and have all the tweets history in your inbox.
 
 # Getting started
+* Clone or download the repo using the green button above
 * Create an application in twitter with the help of their guide: https://developer.twitter.com/en/docs/basics/authentication/guides/access-tokens
 * Place `tweetsender.py` along with `userconf.json`, `smtpconf.json` and `keyconf.json` in the same folder, say in `~/tweetsender`
-* Edit `keyconf.json` and replace values with your actual keys retrieved in step 1
+* Edit `keyconf.json` and replace values with your actual keys retrieved in step 2
 * Edit `smtpconf.json` and replace values with your actual login and pass from your gmail account
 * Edit `userconf.json` and replace or add twitter users you wish to follow. You should replace id value by `""` (empty value) at first, then python script will manage it by itself
 * Install dependencies if it is necessary
