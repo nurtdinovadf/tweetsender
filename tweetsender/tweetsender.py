@@ -11,140 +11,221 @@ import smtplib
 import datetime
 from email.mime.text import MIMEText
 import sys
+import os
+import logging
+
+filename = '{}.log'.format(datetime.date.today().isoformat())
+filenameold = '{}.log'.format((datetime.date.today() - datetime.timedelta(days = 3)).isoformat())
+
+logging.basicConfig(filename=filename,
+                        filemode='a',
+                        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                        datefmt='%H:%M:%S',
+                        level=logging.INFO)
+logger = logging.getLogger('tws')
+
 
 class TwSender(object):
     def __init__(self):
-        print('[INFO] Loading keys...')
-        keys = json.load(open(sys.path[0] + '/keyconf.json'))
-        print('[INFO] Connecting to twitter api...')
-        self.__api = twitter.Api(consumer_key = keys['consumer_key'],
-                      consumer_secret = keys['consumer_secret'],
-                      access_token_key = keys['access_token_key'],
-                      access_token_secret = keys['access_token_secret'])
-        print('[INFO] Loading users...')
-        self.__users = json.load(open(sys.path[0] + '/userconf.json'))
-        print('[INFO] Updating users with empty last tweets...')
-        self.__update_users_ids__()
-        print('[INFO] SMTP server configuration...')
-        self.__smtp_login__()
-        print('[INFO] Collecting tweets...')
-        self.__collect__()
-        print('[INFO] Done!')
+        try:
+            try:
+                os.remove(filenameold)
+            except BaseException:
+                logger.error('Old log file not found')    
+            logger.info('Loading keys...')
+            keys = json.load(open(sys.path[0] + '/keyconf.json'))
+            logger.info('Connecting to twitter api...')
+            self.__api = twitter.Api(consumer_key = keys['consumer_key'],
+                          consumer_secret = keys['consumer_secret'],
+                          access_token_key = keys['access_token_key'],
+                          access_token_secret = keys['access_token_secret'])
+            logger.info('Loading users...')
+            users = json.load(open(sys.path[0] + '/userconf.json'))
+            self.__users = []
+            for user in users:
+                self.__users.append(User(user['user'], user['id']))
+            logger.info('Updating users with empty last tweets...')
+            self.__update_users_ids__()
+            logger.info('SMTP server configuration...')
+            self.__smtp_login__()
+            logger.info('Collecting tweets...')
+            self.__collect__()
+            logger.info('Done!')
+        except BaseException as err:
+            logger.error('Cannot initialize! {}'.format(err))
         
     def __update_users_ids__(self):
-        for user in self.__users:
-            if user['id'] == '':
-                t = self.__api.GetUserTimeline(screen_name=user['user'], count = 2)
-                if t[0].AsDict()['id'] < t[1].AsDict()['id']:
-                    user['id'] = t[0].AsDict()['id']
-                else:
-                    user['id'] = t[1].AsDict()['id']
-        self.__flush_users__(self.__users)
+        try:
+            for user in self.__users:
+                if user.user_id == '':
+                    t = self.__api.GetUserTimeline(screen_name=user.name, count = 2)
+                    if t[0].AsDict()['id'] < t[1].AsDict()['id']:
+                        user.user_id = t[0].AsDict()['id']
+                    else:
+                        user.user_id = t[1].AsDict()['id']
+            self.__flush_users__()
+        except BaseException as err:
+            logger.error('Failed to update users empty ids! {}'.format(err))
         
-    def __flush_users__(self, users):
-        with open(sys.path[0] + '/userconf.json', 'w') as fp:
-            json.dump(users, fp)
+    def __flush_users__(self):
+        try:
+            with open(sys.path[0] + '/userconf.json', 'w') as fp:
+                jdict = []
+                for user in self.__users:
+                    jdict.append({'user': user.name, 'id': user.user_id})
+                json.dump(jdict, fp)
+        except BaseException as err:
+            logger.error('Cannot update userconf file! {}'.format(err))
     
     def __update_users__(self):
-        nusers = []
-        for user in self.__users:
-
-            t = self.__api.GetUserTimeline(screen_name=user['user'], since_id = user['id'])
+        try:
+            nusers = []
+            for user in self.__users:
+    
+                t = self.__api.GetUserTimeline(screen_name=user.name, since_id = user.user_id)
+                idlist = []
+                for s in t:
+                    idlist.append(s.AsDict()['id'])
+                if len(idlist) > 0:
+                    ID = max(idlist)
+                else:
+                    ID = user.user_id
+                nusers.append({'id':ID, 'user': user.name})
+            self.__users = nusers
+            self.__flush_users__()
+        except BaseException as err:
+            logger.error('Failed to update users ids! {}'.format(err))
+            
+    def __update_user__(self, user):
+        try:    
+            t = self.__api.GetUserTimeline(screen_name=user.name, since_id = user.user_id)
             idlist = []
             for s in t:
                 idlist.append(s.AsDict()['id'])
             if len(idlist) > 0:
                 ID = max(idlist)
             else:
-                ID = user['id']
-            nusers.append({'id':ID, 'user': user['user']})
-        self.__users = nusers
-        self.__flush_users__(nusers)
+                ID = user.user_id
+            allbutone = [element for element in self.__users if element.name != user.name]
+            
+            allbutone.append(User(user.name, ID))
+            self.__users = allbutone
+            self.__flush_users__()
+        except BaseException as err:
+            logger.error('Failed to update user {}! {}'.format(user.name, err))
     
     def __collect__(self):
-        ts = []
-        for user in self.__users:
-            t = self.__api.GetUserTimeline(screen_name=user['user'], since_id = user['id'])
-            for s in t:
-                ts.append(s)
-        self.tweets_to_send = ts
+        try:
+            for user in self.__users:
+                t = self.__api.GetUserTimeline(screen_name=user.name, since_id = user.user_id)
+                for s in t:
+                    user.tweets.append(s)
+        except BaseException as err:
+            logger.error('Failed to collect tweets! {}'.format(err))
     
     def __smtp_login__(self):
-        creds = json.load(open(sys.path[0] + '/smtpconf.json'))
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.connect("smtp.gmail.com", 587)
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-
-        #Next, log in to the server
-        
-        server.login(creds['log'], creds['pass'])
-        self.__server = server
+        try:
+            creds = json.load(open(sys.path[0] + '/smtpconf.json'))
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.connect("smtp.gmail.com", 587)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+    
+            #Next, log in to the server
+            
+            server.login(creds['log'], creds['pass'])
+            self.__server = server
+        except BaseException as err:
+            logger.error('Failed to log in (smtp server)! {}'.format(err))
 
     def __send_email__(self, text, subject, fromaddr, toaddr_list, cc = []):
-
-        for addr in toaddr_list:
-            message = ("From: {}\r\n" .format(fromaddr)
-                       + "To: {}\r\n".format(addr)
-                       + "CC: {}\r\n".format(",".join(cc))
-                       + "Subject: {}\r\n".format(subject)
-                       + "{}\r\n".format(text))
-
-            toaddrs = [addr] # + cc + bcc
-            #Send the mail
-            self.__server.sendmail(fromaddr, toaddrs, message)
+        try:
+            for addr in toaddr_list:
+                message = ("From: {}\r\n" .format(fromaddr)
+                           + "To: {}\r\n".format(addr)
+                           + "CC: {}\r\n".format(",".join(cc))
+                           + "Subject: {}\r\n".format(subject)
+                           + "{}\r\n".format(text))
+    
+                toaddrs = [addr] # + cc + bcc
+                #Send the mail
+                self.__server.sendmail(fromaddr, toaddrs, message)
+        except BaseException as err:
+            logger.error('Sending email failed! {}'.format(err))
     
     def __contains_non_ascii_characters__(self, str):
         return not all(ord(c) < 128 for c in str)
     
     def send(self, toaddr_list):
-        if len(self.tweets_to_send) == 0:
-            print('[INFO] No new tweets found, quitting')
-            return
-        print('[INFO] Sending tweets...')
-        for s in self.tweets_to_send:
-            d = datetime.datetime.strptime(s.AsDict()['created_at'], '%a %b %d %H:%M:%S +0000 %Y').date()
-            try:
-                if len(s.AsDict()['urls']) == 0:
-                    if 'retweeted_status' in s.AsDict():
-                        url_short = s.AsDict()['retweeted_status']['urls'][0]['url']
-                        url_full = s.AsDict()['retweeted_status']['urls'][0]['expanded_url']
-                        favs = s.AsDict()['retweeted_status']['favorite_count']
-                    if 'in_reply_to_user_id' in s.AsDict():
-                        url_short = ''
-                        url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])
-                        favs = s.AsDict()['favorite_count']
-                    else:
-                        url_short = ''
-                        url_full = ''
-                        favs = ''
-                else:
-                    url_short = s.AsDict()['urls'][0]['url']
-                    url_full = s.AsDict()['urls'][0]['expanded_url']
-                    favs = s.AsDict()['favorite_count']
-            except BaseException:
-                url_short = ''
-                url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])
-                favs = ''
-            text = ("\r\n{}".format(s.AsDict()['text']) 
-                    + "\r\nCreated at: {}".format(d.strftime("%Y-%m-%d %H:%M:%S"))
-                    + "\r\nTweet URL short: {}".format(url_short)
-                    + "\r\nTweet URL full: {}".format(url_full) 
-                    + "\r\nTweet favorites: {}".format(favs))
-            
-            if(self.__contains_non_ascii_characters__(text)):
-                plain_text = MIMEText(text.encode('utf-8'),'plain','utf-8') 
-            else:
-                plain_text = MIMEText(text,'plain')
-            subject = '{} Tweets {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
-            print('[INFO] Sending tweet: {}'.format(subject))
-            self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
-        print('[INFO] Updating users` last tweets')
-        self.__update_users__()
-        print('[INFO] Done!')
+        try:
+            if len(self.__users) == 0:
+                logger.error('No users found, quitting')
+                return
+            logger.info('Sending tweets...')
+            for user in self.__users:
+                try:
+                    if len(user.tweets) == 0:
+                        logger.error('No tweets found for user {}'.format(user.name))
+                        continue;
+                    for s in user.tweets:
+                        d = datetime.datetime.strptime(s.AsDict()['created_at'], '%a %b %d %H:%M:%S +0000 %Y').date()
+                        try:
+                            if len(s.AsDict()['urls']) == 0:
+                                if 'retweeted_status' in s.AsDict():
+                                    url_short = s.AsDict()['retweeted_status']['urls'][0]['url']
+                                    url_full = s.AsDict()['retweeted_status']['urls'][0]['expanded_url']
+                                    favs = s.AsDict()['retweeted_status']['favorite_count']
+                                if 'in_reply_to_user_id' in s.AsDict():
+                                    url_short = ''
+                                    url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])
+                                    favs = s.AsDict()['favorite_count']
+                                else:
+                                    url_short = ''
+                                    url_full = ''
+                                    favs = ''
+                            else:
+                                url_short = s.AsDict()['urls'][0]['url']
+                                url_full = s.AsDict()['urls'][0]['expanded_url']
+                                favs = s.AsDict()['favorite_count']
+                        except BaseException:
+                            url_short = ''
+                            url_full = ''
+                            if 'id' in s.AsDict():
+                                url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])                        
+                            favs = ''
+                        text = ("\r\n{}".format(s.AsDict()['text']) 
+                                + "\r\nCreated at: {}".format(d.strftime("%Y-%m-%d %H:%M:%S"))
+                                + "\r\nTweet URL short: {}".format(url_short)
+                                + "\r\nTweet URL full: {}".format(url_full) 
+                                + "\r\nTweet favorites: {}".format(favs))
+                        
+                        if(self.__contains_non_ascii_characters__(text)):
+                            plain_text = MIMEText(text.encode('utf-8'),'plain','utf-8') 
+                        else:
+                            plain_text = MIMEText(text,'plain')
+                        subject = '{} Tweets {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
+                        logger.info('Sending tweet: {}'.format(subject))
+                        self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
+                        self.__update_user__(user)
+                except BaseException as err:
+                    logger.error('Failed to send tweets for user: {}, {}'.format(user.name, err))
+        except BaseException as err:
+            logger.error('Cannot send! {}'.format(err))
             
     def cleanup(self):
-        print('[INFO] Quitting SMTP server...')
-        self.__server.quit()
-        print('[INFO] Done!')
+        try:
+            logger.info('Quitting SMTP server...')
+            self.__server.quit()
+            logger.info('Done!')
+        except BaseException as err:
+            logger.error('Cannot clean up! {}'.format(err))
+
+class User(object):
+    def __init__(self, name, user_id = ''):
+        try:
+            self.name = name
+            self.user_id = user_id
+            self.tweets = []
+        except BaseException as err:
+            logger.error('Cannot initialize user! {}'.format(err))
