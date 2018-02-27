@@ -13,9 +13,12 @@ from email.mime.text import MIMEText
 import sys
 import os
 import logging
+import time
 
-filename = '{}.log'.format(datetime.date.today().isoformat())
-filenameold = '{}.log'.format((datetime.date.today() - datetime.timedelta(days = 3)).isoformat())
+cwd = os.path.dirname(os.path.realpath(__file__))
+
+filename = os.path.join(cwd, '{}.log'.format(datetime.date.today().isoformat()))
+filenameold = os.path.join(cwd, '{}.log'.format((datetime.date.today() - datetime.timedelta(days = 3)).isoformat()))
 
 logging.basicConfig(filename=filename,
                         filemode='a',
@@ -157,7 +160,7 @@ class TwSender(object):
     def __contains_non_ascii_characters__(self, str):
         return not all(ord(c) < 128 for c in str)
     
-    def send(self, toaddr_list):
+    def send(self, toaddr_list, skipreplies = True):
         try:
             if len(self.__users) == 0:
                 logger.error('No users found, quitting')
@@ -169,32 +172,74 @@ class TwSender(object):
                         logger.error('No tweets found for user {}'.format(user.name))
                         continue;
                     for s in user.tweets:
+                        reply = False
+                        retweet = False
                         d = datetime.datetime.strptime(s.AsDict()['created_at'], '%a %b %d %H:%M:%S +0000 %Y').date()
                         try:
                             if len(s.AsDict()['urls']) == 0:
                                 if 'retweeted_status' in s.AsDict():
-                                    url_short = s.AsDict()['retweeted_status']['urls'][0]['url']
-                                    url_full = s.AsDict()['retweeted_status']['urls'][0]['expanded_url']
-                                    favs = s.AsDict()['retweeted_status']['favorite_count']
-                                if 'in_reply_to_user_id' in s.AsDict():
-                                    url_short = ''
-                                    url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])
-                                    favs = s.AsDict()['favorite_count']
-                                else:
+                                    retweet = True
+                                    try:
+                                        url_short = ''
+                                        url_full = ''
+                                        favs = ''
+                                        
+                                        
+                                        if 'urls' in s.AsDict()['retweeted_status']:
+                                            if len(s.AsDict()['retweeted_status']['urls']) > 0:
+                                                if 'url' in s.AsDict()['retweeted_status']['urls'][0]:
+                                                    url_short = s.AsDict()['retweeted_status']['urls'][0]['url']
+                                                if 'expanded_url' in s.AsDict()['retweeted_status']['urls'][0]:
+                                                    url_full = s.AsDict()['retweeted_status']['urls'][0]['expanded_url']
+                                            else:
+                                                if 'id' in s.AsDict()['retweeted_status']:
+                                                    url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['retweeted_status']['id'])
+                                        if 'favorite_count' in s.AsDict()['retweeted_status']:
+                                            favs = s.AsDict()['retweeted_status']['favorite_count']
+                                    except BaseException as err:
+                                        logger.error(err)
+                                        url_short = ''
+                                        url_full = '' 
+                                        favs = ''
+                                    
+                                if 'in_reply_to_user_id' in s.AsDict() and not retweet:
+                                    reply = True
                                     url_short = ''
                                     url_full = ''
                                     favs = ''
+                                    if 'id' in s.AsDict():
+                                        url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])
+                                    if 'favorite_count' in s.AsDict():
+                                            favs = s.AsDict()['favorite_count']
+                                    if skipreplies:
+                                        continue;
                             else:
-                                url_short = s.AsDict()['urls'][0]['url']
-                                url_full = s.AsDict()['urls'][0]['expanded_url']
-                                favs = s.AsDict()['favorite_count']
-                        except BaseException:
+                                url_short = ''
+                                url_full = ''
+                                favs = ''
+                                if 'retweeted_status' in s.AsDict():
+                                    retweet = True
+                                if 'in_reply_to_user_id' in s.AsDict():
+                                    reply = True
+                                if 'urls' in s.AsDict():
+                                    if len(s.AsDict()['urls']) > 0:
+                                        if 'url' in s.AsDict()['urls'][0]:
+                                            url_short = s.AsDict()['urls'][0]['url']
+                                        if 'expanded_url' in s.AsDict()['urls'][0]:
+                                            url_full = s.AsDict()['urls'][0]['expanded_url']
+                                if 'favorite_count' in s.AsDict():
+                                    favs = s.AsDict()['favorite_count']
+                        except BaseException as err:
+                            logger.error(err)
                             url_short = ''
                             url_full = ''
                             if 'id' in s.AsDict():
                                 url_full = 'https://twitter.com/i/web/status/{}'.format(s.AsDict()['id'])                        
                             favs = ''
-                        text = ("\r\n{}".format(s.AsDict()['text']) 
+                        ttext = ''
+                        if 'text' in s.AsDict():
+                            ttext = s.AsDict()['text']
+                        text = ("\r\n{}".format(ttext) 
                                 + "\r\nCreated at: {}".format(d.strftime("%Y-%m-%d %H:%M:%S"))
                                 + "\r\nTweet URL short: {}".format(url_short)
                                 + "\r\nTweet URL full: {}".format(url_full) 
@@ -204,9 +249,21 @@ class TwSender(object):
                             plain_text = MIMEText(text.encode('utf-8'),'plain','utf-8') 
                         else:
                             plain_text = MIMEText(text,'plain')
-                        subject = '{} Tweets {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
-                        logger.info('Sending tweet: {}'.format(subject))
-                        self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
+                        if not reply and not retweet:
+                            subject = '{} Tweets {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
+                            logger.info('Sending tweet: {}'.format(subject))
+                            self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
+                            time.sleep(10)
+                        if retweet:
+                            subject = '{} RETweets {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
+                            logger.info('Sending retweet: {}'.format(subject))
+                            self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
+                            time.sleep(10)
+                        if not skipreplies and reply and not retweet:
+                            subject = '{} Replies {}, {}'.format(s.AsDict()['user']['screen_name'], d.year, d.month)
+                            logger.info('Sending reply: {}'.format(subject))
+                            self.__send_email__(text = plain_text, subject = subject, fromaddr = '', toaddr_list = toaddr_list)
+                            time.sleep(10)
                         self.__update_user__(user)
                 except BaseException as err:
                     logger.error('Failed to send tweets for user: {}, {}'.format(user.name, err))
